@@ -162,6 +162,12 @@ task_create_parser.add_argument(
     help='''number of seconds to wait until checking
             if data compression finished (necessary before uploading annotations)'''
 )
+task_create_parser.add_argument(
+    '--image_quality',
+    default=50,
+    type=int,
+    help='''quality of uploaded images'''
+)
 
 #######################################################################
 # Delete
