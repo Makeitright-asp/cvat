@@ -20,12 +20,14 @@ import {
     Rotation,
     ContextMenuType,
     Workspace,
+    Model,
 } from 'reducers/interfaces';
 
 import getCore from 'cvat-core-wrapper';
 import logger, { LogType } from 'cvat-logger';
 import { RectDrawingMethod } from 'cvat-canvas-wrapper';
 import { getCVATStore } from 'cvat-store';
+import { MutableRefObject } from 'react';
 
 interface AnnotationsParameters {
     filters: string[];
@@ -187,6 +189,8 @@ export enum AnnotationActionTypes {
     CHANGE_WORKSPACE = 'CHANGE_WORKSPACE',
     SAVE_LOGS_SUCCESS = 'SAVE_LOGS_SUCCESS',
     SAVE_LOGS_FAILED = 'SAVE_LOGS_FAILED',
+    INTERACT_WITH_CANVAS = 'INTERACT_WITH_CANVAS',
+    SET_AI_TOOLS_REF = 'SET_AI_TOOLS_REF',
 }
 
 export function saveLogsAsync(): ThunkAction {
@@ -997,7 +1001,7 @@ export function getJobAsync(
 export function saveAnnotationsAsync(sessionInstance: any):
 ThunkAction {
     return async (dispatch: ActionCreator<Dispatch>): Promise<void> => {
-        const { filters, frame, showAllInterpolationTracks } = receiveAnnotationsParameters();
+        const { filters, showAllInterpolationTracks } = receiveAnnotationsParameters();
 
         dispatch({
             type: AnnotationActionTypes.SAVE_ANNOTATIONS,
@@ -1017,15 +1021,16 @@ ThunkAction {
                     },
                 });
             });
-
-            const states = await sessionInstance
-                .annotations.get(frame, showAllInterpolationTracks, filters);
             await saveJobEvent.close();
             await sessionInstance.logger.log(
                 LogType.sendTaskInfo,
                 await jobInfoGenerator(sessionInstance),
             );
             dispatch(saveLogsAsync());
+
+            const { frame } = receiveAnnotationsParameters();
+            const states = await sessionInstance
+                .annotations.get(frame, showAllInterpolationTracks, filters);
 
             dispatch({
                 type: AnnotationActionTypes.SAVE_ANNOTATIONS_SUCCESS,
@@ -1385,6 +1390,26 @@ export function pasteShapeAsync(): ThunkAction {
     };
 }
 
+export function interactWithCanvas(activeInteractor: Model, activeLabelID: number): AnyAction {
+    return {
+        type: AnnotationActionTypes.INTERACT_WITH_CANVAS,
+        payload: {
+            activeInteractor,
+            activeLabelID,
+        },
+    };
+}
+
+export function setAIToolsRef(ref: MutableRefObject<any>): AnyAction {
+    return {
+        type: AnnotationActionTypes.SET_AI_TOOLS_REF,
+        payload: {
+            aiToolsRef: ref,
+        },
+    };
+}
+
+
 export function repeatDrawShapeAsync(): ThunkAction {
     return async (dispatch: ActionCreator<Dispatch>): Promise<void> => {
         const {
@@ -1401,6 +1426,7 @@ export function repeatDrawShapeAsync(): ThunkAction {
                 },
             },
             drawing: {
+                activeInteractor,
                 activeObjectType,
                 activeLabelID,
                 activeShapeType,
@@ -1410,6 +1436,25 @@ export function repeatDrawShapeAsync(): ThunkAction {
         } = getStore().getState().annotation;
 
         let activeControl = ActiveControl.CURSOR;
+        if (activeInteractor) {
+            if (activeInteractor.type === 'tracker') {
+                canvasInstance.interact({
+                    enabled: true,
+                    shapeType: 'rectangle',
+                });
+                dispatch(interactWithCanvas(activeInteractor, activeLabelID));
+            } else {
+                canvasInstance.interact({
+                    enabled: true,
+                    shapeType: 'points',
+                    ...activeInteractor.params.canvas,
+                });
+                dispatch(interactWithCanvas(activeInteractor, activeLabelID));
+            }
+
+            return;
+        }
+
         if (activeShapeType === ShapeType.RECTANGLE) {
             activeControl = ActiveControl.DRAW_RECTANGLE;
         } else if (activeShapeType === ShapeType.POINTS) {
@@ -1443,7 +1488,7 @@ export function repeatDrawShapeAsync(): ThunkAction {
                 rectDrawingMethod: activeRectDrawingMethod,
                 numberOfPoints: activeNumOfPoints,
                 shapeType: activeShapeType,
-                crosshair: activeShapeType === ShapeType.RECTANGLE,
+                crosshair: [ShapeType.RECTANGLE, ShapeType.CUBOID].includes(activeShapeType),
             });
         }
     };
@@ -1490,7 +1535,7 @@ export function redrawShapeAsync(): ThunkAction {
                     enabled: true,
                     redraw: activatedStateID,
                     shapeType: state.shapeType,
-                    crosshair: state.shapeType === ShapeType.RECTANGLE,
+                    crosshair: [ShapeType.RECTANGLE, ShapeType.CUBOID].includes(state.shapeType),
                 });
             }
         }

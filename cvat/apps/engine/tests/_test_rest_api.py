@@ -72,13 +72,14 @@ import av
 import numpy as np
 from django.conf import settings
 from django.contrib.auth.models import Group, User
+from django.http import HttpResponse
 from PIL import Image
 from pycocotools import coco as coco_loader
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from cvat.apps.engine.models import (AttributeType, Data, Job, Project,
-    Segment, StatusChoice, Task)
+    Segment, StatusChoice, Task, StorageMethodChoice)
 
 _setUpModule()
 
@@ -1199,7 +1200,18 @@ class TaskDeleteAPITestCase(APITestCase):
     def test_api_v1_tasks_id_no_auth(self):
         self._check_api_v1_tasks_id(None)
 
+    def test_api_v1_tasks_delete_task_data_after_delete_task(self):
+        for task in self.tasks:
+            task_dir = task.get_task_dirname()
+            self.assertTrue(os.path.exists(task_dir))
+        self._check_api_v1_tasks_id(self.admin)
+        for task in self.tasks:
+            task_dir = task.get_task_dirname()
+            self.assertFalse(os.path.exists(task_dir))
+
+
 class TaskUpdateAPITestCase(APITestCase):
+
     def setUp(self):
         self.client = APIClient()
 
@@ -1670,7 +1682,8 @@ class TaskDataAPITestCase(APITestCase):
         stream = container.streams.video[0]
         return [f.to_image() for f in container.decode(stream)]
 
-    def _test_api_v1_tasks_id_data_spec(self, user, spec, data, expected_compressed_type, expected_original_type, image_sizes):
+    def _test_api_v1_tasks_id_data_spec(self, user, spec, data, expected_compressed_type, expected_original_type, image_sizes,
+                                        expected_storage_method=StorageMethodChoice.FILE_SYSTEM):
         # create task
         response = self._create_task(user, spec)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1694,6 +1707,7 @@ class TaskDataAPITestCase(APITestCase):
             self.assertEqual(expected_compressed_type, task["data_compressed_chunk_type"])
             self.assertEqual(expected_original_type, task["data_original_chunk_type"])
             self.assertEqual(len(image_sizes), task["size"])
+            self.assertEqual(expected_storage_method, Task.objects.get(pk=task_id).data.storage_method)
 
         # check preview
         response = self._get_preview(task_id, user)
@@ -1706,7 +1720,10 @@ class TaskDataAPITestCase(APITestCase):
         response = self._get_compressed_chunk(task_id, user, 0)
         self.assertEqual(response.status_code, expected_status_code)
         if expected_status_code == status.HTTP_200_OK:
-            compressed_chunk = io.BytesIO(b"".join(response.streaming_content))
+            if isinstance(response, HttpResponse):
+                compressed_chunk = io.BytesIO(response.content)
+            else:
+                compressed_chunk = io.BytesIO(b"".join(response.streaming_content))
             if task["data_compressed_chunk_type"] == self.ChunkType.IMAGESET:
                 images = self._extract_zip_chunk(compressed_chunk)
             else:
@@ -1721,7 +1738,10 @@ class TaskDataAPITestCase(APITestCase):
         response = self._get_original_chunk(task_id, user, 0)
         self.assertEqual(response.status_code, expected_status_code)
         if expected_status_code == status.HTTP_200_OK:
-            original_chunk  = io.BytesIO(b"".join(response.streaming_content))
+            if isinstance(response, HttpResponse):
+                original_chunk = io.BytesIO(response.getvalue())
+            else:
+                original_chunk  = io.BytesIO(b"".join(response.streaming_content))
             if task["data_original_chunk_type"] == self.ChunkType.IMAGESET:
                 images = self._extract_zip_chunk(original_chunk)
             else:
@@ -1909,6 +1929,74 @@ class TaskDataAPITestCase(APITestCase):
 
         self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET, image_sizes)
 
+        task_spec = {
+            "name": "use_cache video task #8",
+            "overlap": 0,
+            "segment_size": 0,
+            "labels": [
+                {"name": "car"},
+                {"name": "person"},
+            ]
+        }
+
+        task_data = {
+            "server_files[0]": 'test_video_1.mp4',
+            "image_quality": 70,
+            "use_cache": True,
+        }
+
+        image_sizes = self._image_sizes[task_data["server_files[0]"]]
+
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO,
+                                             self.ChunkType.VIDEO, image_sizes, StorageMethodChoice.CACHE)
+
+        task_spec = {
+            "name": "use_cache images task #9",
+            "overlap": 0,
+            "segment_size": 0,
+            "labels": [
+                {"name": "car"},
+                {"name": "person"},
+            ]
+        }
+
+        task_data = {
+            "server_files[0]": "test_1.jpg",
+            "server_files[1]": "test_2.jpg",
+            "server_files[2]": "test_3.jpg",
+            "image_quality": 70,
+            "use_cache": True,
+        }
+        image_sizes = [
+            self._image_sizes[task_data["server_files[0]"]],
+            self._image_sizes[task_data["server_files[1]"]],
+            self._image_sizes[task_data["server_files[2]"]],
+        ]
+
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET,
+                                             self.ChunkType.IMAGESET, image_sizes, StorageMethodChoice.CACHE)
+
+        task_spec = {
+            "name": "my zip archive task #10",
+            "overlap": 0,
+            "segment_size": 0,
+            "labels": [
+                {"name": "car"},
+                {"name": "person"},
+            ]
+        }
+
+        task_data = {
+            "server_files[0]": "test_archive_1.zip",
+            "image_quality": 70,
+            "use_cache": True
+        }
+
+        image_sizes = self._image_sizes[task_data["server_files[0]"]]
+
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET,
+                                             self.ChunkType.IMAGESET, image_sizes, StorageMethodChoice.CACHE)
+
     def test_api_v1_tasks_id_data_admin(self):
         self._test_api_v1_tasks_id_data(self.admin)
 
@@ -2005,7 +2093,14 @@ class JobAnnotationAPITestCase(APITestCase):
                 "client_files[0]": generate_image_file("test_1.jpg")[1],
                 "client_files[1]": generate_image_file("test_2.jpg")[1],
                 "client_files[2]": generate_image_file("test_3.jpg")[1],
+                "client_files[4]": generate_image_file("test_4.jpg")[1],
+                "client_files[5]": generate_image_file("test_5.jpg")[1],
+                "client_files[6]": generate_image_file("test_6.jpg")[1],
+                "client_files[7]": generate_image_file("test_7.jpg")[1],
+                "client_files[8]": generate_image_file("test_8.jpg")[1],
+                "client_files[9]": generate_image_file("test_9.jpg")[1],
                 "image_quality": 75,
+                "frame_filter": "step=3",
             }
             response = self.client.post("/api/v1/tasks/{}/data".format(tid), data=images)
             assert response.status_code == status.HTTP_202_ACCEPTED
@@ -2125,7 +2220,7 @@ class JobAnnotationAPITestCase(APITestCase):
                     "occluded": False
                 },
                 {
-                    "frame": 1,
+                    "frame": 2,
                     "label_id": task["labels"][1]["id"],
                     "group": None,
                     "source": "manual",
@@ -2162,7 +2257,7 @@ class JobAnnotationAPITestCase(APITestCase):
                             ]
                         },
                         {
-                            "frame": 1,
+                            "frame": 2,
                             "attributes": [],
                             "points": [2.0, 2.1, 100, 300.222],
                             "type": "rectangle",
@@ -2179,7 +2274,7 @@ class JobAnnotationAPITestCase(APITestCase):
                     "attributes": [],
                     "shapes": [
                         {
-                            "frame": 1,
+                            "frame": 2,
                             "attributes": [],
                             "points": [1.0, 2.1, 100, 300.222],
                             "type": "rectangle",

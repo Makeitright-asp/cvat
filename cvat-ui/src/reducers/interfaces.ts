@@ -4,6 +4,7 @@
 
 import { ExtendedKeyMapOptions } from 'react-hotkeys';
 import { Canvas, RectDrawingMethod } from 'cvat-canvas-wrapper';
+import { MutableRefObject } from 'react';
 
 export type StringObject = {
     [index: string]: string;
@@ -17,6 +18,7 @@ export interface AuthState {
     authActionsInitialized: boolean;
     showChangePasswordDialog: boolean;
     allowChangePassword: boolean;
+    allowResetPassword: boolean;
 }
 
 export interface TasksQuery {
@@ -39,6 +41,7 @@ export interface Task {
 export interface TasksState {
     initialized: boolean;
     fetching: boolean;
+    updating: boolean;
     hideEmpty: boolean;
     gettingQuery: TasksQuery;
     count: number;
@@ -76,7 +79,6 @@ export interface FormatsState {
 // eslint-disable-next-line import/prefer-default-export
 export enum SupportedPlugins {
     GIT_INTEGRATION = 'GIT_INTEGRATION',
-    DEXTR_SEGMENTATION = 'DEXTR_SEGMENTATION',
     ANALYTICS = 'ANALYTICS',
 }
 
@@ -140,6 +142,9 @@ export interface Model {
     framework: string;
     description: string;
     type: string;
+    params: {
+        canvas: object;
+    };
 }
 
 export enum RQStatus {
@@ -161,7 +166,10 @@ export interface ModelsState {
     initialized: boolean;
     fetching: boolean;
     creatingStatus: string;
-    models: Model[];
+    interactors: Model[];
+    detectors: Model[];
+    trackers: Model[];
+    reid: Model[];
     inferences: {
         [index: number]: ActiveInference;
     };
@@ -182,6 +190,8 @@ export interface NotificationsState {
             logout: null | ErrorState;
             register: null | ErrorState;
             changePassword: null | ErrorState;
+            requestPasswordReset: null | ErrorState;
+            resetPassword: null | ErrorState;
             loadAuthActions: null | ErrorState;
         };
         tasks: {
@@ -206,9 +216,7 @@ export interface NotificationsState {
             fetching: null | ErrorState;
         };
         models: {
-            creating: null | ErrorState;
             starting: null | ErrorState;
-            deleting: null | ErrorState;
             fetching: null | ErrorState;
             canceling: null | ErrorState;
             metaFetching: null | ErrorState;
@@ -253,6 +261,8 @@ export interface NotificationsState {
         auth: {
             changePasswordDone: string;
             registerDone: string;
+            requestPasswordResetDone: string;
+            resetPasswordDone: string;
         };
     };
 }
@@ -270,6 +280,7 @@ export enum ActiveControl {
     GROUP = 'group',
     SPLIT = 'split',
     EDIT = 'edit',
+    AI_TOOLS = 'ai_tools',
 }
 
 export enum ShapeType {
@@ -342,6 +353,7 @@ export interface AnnotationState {
         frameAngles: number[];
     };
     drawing: {
+        activeInteractor?: Model;
         activeShapeType: ShapeType;
         activeRectDrawingMethod?: RectDrawingMethod;
         activeNumOfPoints?: number;
@@ -354,6 +366,7 @@ export interface AnnotationState {
         activatedStateID: number | null;
         activatedAttributeID: number | null;
         collapsed: Record<number, boolean>;
+        collapsedAll: boolean;
         states: any[];
         filters: string[];
         filtersHistory: string[];
@@ -386,6 +399,7 @@ export interface AnnotationState {
     appearanceCollapsed: boolean;
     tabContentHeight: number;
     workspace: Workspace;
+    aiToolsRef: MutableRefObject<any>;
 }
 
 export enum Workspace {
@@ -445,7 +459,8 @@ export interface ShapesSettingsState {
     colorBy: ColorBy;
     opacity: number;
     selectedOpacity: number;
-    blackBorders: boolean;
+    outlined: boolean;
+    outlineColor: string;
     showBitmap: boolean;
     showProjections: boolean;
 }
